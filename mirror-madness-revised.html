@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mirror Madness - Revised Position</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background-color: #111;
+            color: white;
+            font-family: Arial, sans-serif;
+        }
+        
+        #game-container {
+            position: relative;
+        }
+        
+        canvas {
+            display: block;
+            background-color: #222;
+            border: 2px solid #444;
+        }
+        
+        #overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background-color: rgba(0, 0, 0, 0.7);
+            z-index: 10;
+        }
+        
+        h1, h2 {
+            margin: 0 0 20px 0;
+            text-align: center;
+        }
+        
+        p {
+            text-align: center;
+            margin: 0 0 20px 0;
+            max-width: 400px;
+        }
+        
+        button {
+            padding: 10px 20px;
+            background-color: white;
+            color: black;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        
+        button:hover {
+            background-color: #ddd;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="gameCanvas" width="600" height="400"></canvas>
+        <div id="overlay">
+            <h1>Mirror Madness</h1>
+            <p>Navigate through a mirrored maze where your controls are constantly flipped. Collect all 3 mirror shards before reaching the exit!</p>
+            <p>Use WASD or arrow keys to move.</p>
+            <button id="startButton">Start Game</button>
+        </div>
+    </div>
+
+    <script>
+        // Canvas setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const overlay = document.getElementById('overlay');
+        const startButton = document.getElementById('startButton');
+        
+        // Game constants
+        const GAME_WIDTH = canvas.width;
+        const GAME_HEIGHT = canvas.height;
+        const PLAYER_SIZE = 20;
+        const PLAYER_SPEED = 4;
+        
+        // Color constants
+        const PLAYER_COLOR = 'white';
+        const WALL_COLOR = '#555';
+        const SHARD_COLOR = '#09f';
+        const EXIT_COLOR = '#0f0';
+        const ZONE_COLORS = {
+            normal: 'rgba(255, 255, 255, 0.05)',
+            horizontal: 'rgba(255, 100, 100, 0.1)',
+            vertical: 'rgba(100, 100, 255, 0.1)',
+            both: 'rgba(255, 100, 255, 0.1)'
+        };
+        
+        // Game variables
+        let gameRunning = false;
+        let player = {
+            x: 50,
+            y: 300,
+            width: PLAYER_SIZE,
+            height: PLAYER_SIZE,
+            color: PLAYER_COLOR
+        };
+        
+        let timeRemaining = 30;
+        let timerInterval;
+        let gameState = 'menu';  // menu, playing, gameOver, levelComplete
+        
+        let walls = [];
+        let mirrorZones = [];
+        let shards = [];
+        let collectedShards = 0;
+        let exit = {};
+        
+        // Input handling
+        let keys = {
+            up: false,
+            down: false,
+            left: false,
+            right: false
+        };
+        
+        document.addEventListener('keydown', function(e) {
+            if ((e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') && gameRunning) keys.up = true;
+            if ((e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') && gameRunning) keys.down = true;
+            if ((e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') && gameRunning) keys.left = true;
+            if ((e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') && gameRunning) keys.right = true;
+        });
+        
+        document.addEventListener('keyup', function(e) {
+            if ((e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W')) keys.up = false;
+            if ((e.key === 'ArrowDown' || e.key === 's' || e.key === 'S')) keys.down = false;
+            if ((e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A')) keys.left = false;
+            if ((e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D')) keys.right = false;
+        });
+        
+        // Start/restart button
+        startButton.addEventListener('click', function() {
+            if (gameState === 'menu' || gameState === 'gameOver' || gameState === 'levelComplete') {
+                startGame();
+            }
+        });
+        
+        // Game setup functions
+        function setupLevel() {
+            // Reset player
+            player.x = 50;
+            player.y = 300;
+            
+            // Reset timer
+            timeRemaining = 30;
+            
+            // Set boundaries and inner walls
+            walls = [
+                // Outer walls
+                { x: 0, y: 0, width: GAME_WIDTH, height: 10 },
+                { x: 0, y: 0, width: 10, height: GAME_HEIGHT },
+                { x: GAME_WIDTH - 10, y: 0, width: 10, height: GAME_HEIGHT },
+                { x: 0, y: GAME_HEIGHT - 10, width: GAME_WIDTH, height: 10 },
+                
+                // Inner walls - columns with gaps
+                { x: 150, y: 0, width: 10, height: 250 },
+                { x: 150, y: 330, width: 10, height: 70 },
+                
+                { x: 300, y: 150, width: 10, height: 250 },
+                { x: 300, y: 0, width: 10, height: 70 },
+                
+                { x: 450, y: 0, width: 10, height: 200 },
+                { x: 450, y: 280, width: 10, height: 120 }
+            ];
+            
+            // Set mirror zones - make sure these line up with the walls
+            mirrorZones = [
+                { x: 10, y: 10, width: 140, height: GAME_HEIGHT - 20, type: 'normal' },
+                { x: 160, y: 10, width: 140, height: GAME_HEIGHT - 20, type: 'horizontal' },
+                { x: 310, y: 10, width: 140, height: GAME_HEIGHT - 20, type: 'vertical' },
+                { x: 460, y: 10, width: GAME_WIDTH - 470, height: GAME_HEIGHT - 20, type: 'both' }
+            ];
+            
+            // Reset shards - position them AWAY from columns
+            shards = [
+                { x: 70, y: 150, width: 15, height: 15, collected: false },
+                { x: 225, y: 200, width: 15, height: 15, collected: false },
+                { x: 370, y: 120, width: 15, height: 15, collected: false }
+            ];
+            collectedShards = 0;
+            
+            // Set exit
+            exit = { x: 550, y: 50, width: 30, height: 30 };
+        }
+        
+        function startGame() {
+            overlay.style.display = 'none';
+            setupLevel();
+            gameRunning = true;
+            gameState = 'playing';
+            
+            // Start timer
+            clearInterval(timerInterval);
+            timerInterval = setInterval(function() {
+                if (gameRunning) {
+                    timeRemaining--;
+                    
+                    if (timeRemaining <= 0) {
+                        gameOver();
+                    }
+                }
+            }, 1000);
+            
+            // Start game loop
+            requestAnimationFrame(gameLoop);
+        }
+        
+        function gameOver() {
+            gameRunning = false;
+            gameState = 'gameOver';
+            clearInterval(timerInterval);
+            
+            overlay.style.display = 'flex';
+            overlay.innerHTML = `
+                <h2>Game Over</h2>
+                <p>Time ran out! The mirrors have consumed you.</p>
+                <button id="startButton">Try Again</button>
+            `;
+            
+            document.getElementById('startButton').addEventListener('click', startGame);
+        }
+        
+        function levelComplete() {
+            gameRunning = false;
+            gameState = 'levelComplete';
+            clearInterval(timerInterval);
+            
+            overlay.style.display = 'flex';
+            overlay.innerHTML = `
+                <h2>Level Complete!</h2>
+                <p>You've escaped the mirrored maze!</p>
+                <button id="startButton">Play Again</button>
+            `;
+            
+            document.getElementById('startButton').addEventListener('click', startGame);
+        }
+        
+        // Game mechanics
+        function movePlayer() {
+            let moveX = 0;
+            let moveY = 0;
+            let currentZone = getCurrentZone();
+            
+            // Apply movement based on current zone
+            if (currentZone.type === 'normal') {
+                if (keys.left) moveX -= PLAYER_SPEED;
+                if (keys.right) moveX += PLAYER_SPEED;
+                if (keys.up) moveY -= PLAYER_SPEED;
+                if (keys.down) moveY += PLAYER_SPEED;
+            } else if (currentZone.type === 'horizontal') {
+                if (keys.left) moveX += PLAYER_SPEED; // Reversed
+                if (keys.right) moveX -= PLAYER_SPEED; // Reversed
+                if (keys.up) moveY -= PLAYER_SPEED;
+                if (keys.down) moveY += PLAYER_SPEED;
+            } else if (currentZone.type === 'vertical') {
+                if (keys.left) moveX -= PLAYER_SPEED;
+                if (keys.right) moveX += PLAYER_SPEED;
+                if (keys.up) moveY += PLAYER_SPEED; // Reversed
+                if (keys.down) moveY -= PLAYER_SPEED; // Reversed
+            } else if (currentZone.type === 'both') {
+                if (keys.left) moveX += PLAYER_SPEED; // Reversed
+                if (keys.right) moveX -= PLAYER_SPEED; // Reversed
+                if (keys.up) moveY += PLAYER_SPEED; // Reversed
+                if (keys.down) moveY -= PLAYER_SPEED; // Reversed
+            }
+            
+            // Apply movement with wall collision detection
+            let newX = player.x + moveX;
+            let newY = player.y + moveY;
+            
+            // Check X movement
+            if (!checkWallCollision(newX, player.y)) {
+                player.x = newX;
+            }
+            
+            // Check Y movement
+            if (!checkWallCollision(player.x, newY)) {
+                player.y = newY;
+            }
+            
+            // Keep player within bounds
+            player.x = Math.max(10, Math.min(GAME_WIDTH - PLAYER_SIZE - 10, player.x));
+            player.y = Math.max(10, Math.min(GAME_HEIGHT - PLAYER_SIZE - 10, player.y));
+        }
+        
+        function getCurrentZone() {
+            for (let zone of mirrorZones) {
+                if (
+                    player.x >= zone.x &&
+                    player.x + player.width <= zone.x + zone.width &&
+                    player.y >= zone.y &&
+                    player.y + player.height <= zone.y + zone.height
+                ) {
+                    return zone;
+                }
+            }
+            return { type: 'normal' }; // Default to normal if not in a zone
+        }
+        
+        function checkWallCollision(x, y) {
+            for (let wall of walls) {
+                if (
+                    x < wall.x + wall.width &&
+                    x + player.width > wall.x &&
+                    y < wall.y + wall.height &&
+                    y + player.height > wall.y
+                ) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        
+        function checkCollisions() {
+            // Check shard collisions
+            for (let i = 0; i < shards.length; i++) {
+                if (!shards[i].collected &&
+                    player.x < shards[i].x + shards[i].width &&
+                    player.x + player.width > shards[i].x &&
+                    player.y < shards[i].y + shards[i].height &&
+                    player.y + player.height > shards[i].y
+                ) {
+                    shards[i].collected = true;
+                    collectedShards++;
+                }
+            }
+            
+            // Check exit collision
+            if (
+                player.x < exit.x + exit.width &&
+                player.x + player.width > exit.x &&
+                player.y < exit.y + exit.height &&
+                player.y + player.height > exit.y
+            ) {
+                if (collectedShards === shards.length) {
+                    levelComplete();
+                }
+            }
+        }
+        
+        // Drawing functions
+        function drawPlayer() {
+            ctx.fillStyle = player.color;
+            ctx.fillRect(player.x, player.y, player.width, player.height);
+        }
+        
+        function drawWalls() {
+            ctx.fillStyle = WALL_COLOR;
+            for (let wall of walls) {
+                ctx.fillRect(wall.x, wall.y, wall.width, wall.height);
+            }
+        }
+        
+        function drawMirrorZones() {
+            for (let zone of mirrorZones) {
+                ctx.fillStyle = ZONE_COLORS[zone.type];
+                ctx.fillRect(zone.x, zone.y, zone.width, zone.height);
+                
+                // Draw zone border
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+                ctx.strokeRect(zone.x, zone.y, zone.width, zone.height);
+                
+                // Draw zone type text
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+                ctx.font = '12px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(
+                    zone.type.charAt(0).toUpperCase() + zone.type.slice(1),
+                    zone.x + zone.width / 2,
+                    zone.y + 20
+                );
+            }
+        }
+        
+        function drawShards() {
+            ctx.fillStyle = SHARD_COLOR;
+            for (let shard of shards) {
+                if (!shard.collected) {
+                    ctx.beginPath();
+                    ctx.arc(
+                        shard.x + shard.width / 2,
+                        shard.y + shard.height / 2,
+                        shard.width / 2,
+                        0,
+                        Math.PI * 2
+                    );
+                    ctx.fill();
+                    
+                    // Add glow effect
+                    ctx.shadowColor = SHARD_COLOR;
+                    ctx.shadowBlur = 10;
+                    ctx.fillStyle = 'rgba(0, 150, 255, 0.5)';
+                    ctx.beginPath();
+                    ctx.arc(
+                        shard.x + shard.width / 2,
+                        shard.y + shard.height / 2,
+                        shard.width / 2 * 0.7,
+                        0,
+                        Math.PI * 2
+                    );
+                    ctx.fill();
+                    ctx.shadowBlur = 0;
+                }
+            }
+        }
+        
+        function drawExit() {
+            ctx.fillStyle = EXIT_COLOR;
+            ctx.fillRect(exit.x, exit.y, exit.width, exit.height);
+            
+            // Add glow effect
+            ctx.shadowColor = EXIT_COLOR;
+            ctx.shadowBlur = 10;
+            ctx.strokeStyle = EXIT_COLOR;
+            ctx.lineWidth = 2;
+            ctx.strokeRect(exit.x + 4, exit.y + 4, exit.width - 8, exit.height - 8);
+            ctx.shadowBlur = 0;
+            
+            // Add exit text
+            ctx.fillStyle = 'black';
+            ctx.font = '12px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('EXIT', exit.x + exit.width / 2, exit.y + exit.height / 2 + 4);
+        }
+        
+        function drawUI() {
+            // Draw time
+            ctx.fillStyle = 'white';
+            ctx.font = '16px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText(`Time: ${timeRemaining}`, 20, 30);
+            
+            // Draw shards count
+            ctx.textAlign = 'right';
+            ctx.fillText(`Shards: ${collectedShards}/${shards.length}`, GAME_WIDTH - 20, 30);
+            
+            // Draw current zone indicator
+            let currentZone = getCurrentZone();
+            ctx.textAlign = 'center';
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+            ctx.fillText(
+                `Controls: ${currentZone.type.charAt(0).toUpperCase() + currentZone.type.slice(1)}`,
+                GAME_WIDTH / 2,
+                30
+            );
+        }
+        
+        // Main game loop
+        function gameLoop() {
+            // Clear the canvas
+            ctx.clearRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+            
+            if (gameRunning) {
+                // Game logic
+                movePlayer();
+                checkCollisions();
+                
+                // Draw everything
+                drawMirrorZones();
+                drawWalls();
+                drawShards();
+                drawExit();
+                drawPlayer();
+                drawUI();
+                
+                // Continue the loop
+                requestAnimationFrame(gameLoop);
+            }
+        }
+    </script>
+</body>
+</html>
