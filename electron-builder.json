@@ -1,0 +1,18 @@
+{
+  "appId": "com.yourname.notetakingapp",
+  "productName": "Note Taking App",
+  "directories": {
+    "output": "dist"
+  },
+  "mac": {
+    "category": "public.app-category.productivity",
+    "target": ["dmg"]
+  },
+  "win": {
+    "target": ["nsis"]
+  },
+  "linux": {
+    "target": ["AppImage"],
+    "category": "Office"
+  }
+}
